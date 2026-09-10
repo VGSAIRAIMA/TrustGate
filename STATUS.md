@@ -92,7 +92,7 @@
     4. Scene 4 (Docs search poisoned doc) -> output sanitized (`REDACTED`, clean sentences forwarded).
     5. Scene 5 (Benign calculator v2) -> held for re-approval, never blocked (`HOLD`, risk 20).
   - Standalone live runner script: `demo_rehearsal.py`.
-  - Test suite status: 65/65 tests passed.
+  - Test suite status: 66/66 tests passed.
 
 ## Environment & API Key Notes
 - `venv/` is local and ignored by Git.

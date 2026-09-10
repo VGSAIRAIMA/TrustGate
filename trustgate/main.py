@@ -12,6 +12,8 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from trustgate.proxy.core import StdioProxy
+from trustgate.proxy.adapter import DownstreamConfig, infer_server_name, inherited_overrides
+from trustgate.proxy.gateway import MCPGateway
 from trustgate.storage.database import DEFAULT_DB_PATH
 
 
@@ -50,6 +52,24 @@ def parse_args(args=None):
         default=bool(os.environ.get("OPENROUTER_API_KEY")),
         help="Enable OpenRouter semantic LLM scanning tier (defaults to True if OPENROUTER_API_KEY is set)",
     )
+    run_parser.add_argument("--approval-timeout", type=float, default=30.0, help="Seconds before pending approval fails closed.")
+
+    gateway_parser = subparsers.add_parser(
+        "gateway",
+        help="Run an MCP-compatible TrustGate gateway in front of a downstream MCP server",
+    )
+    gateway_parser.add_argument("--target", required=True, help="Downstream MCP server command.")
+    gateway_parser.add_argument("--name", default=None, help="Downstream server identity used by TrustGate.")
+    gateway_parser.add_argument("--publisher", default=None, help="Downstream publisher identity.")
+    gateway_parser.add_argument("--db", default=DEFAULT_DB_PATH, help="SQLite database path.")
+    gateway_parser.add_argument(
+        "--use-llm",
+        action="store_true",
+        default=bool(os.environ.get("OPENROUTER_API_KEY")),
+        help="Enable OpenRouter semantic scanning when a key is configured.",
+    )
+    gateway_parser.add_argument("--approval-timeout", type=float, default=30.0, help="Seconds before pending approval fails closed.")
+    gateway_parser.add_argument("--cwd", default=None, help="Working directory for the downstream server.")
 
     return parser.parse_args(args)
 
@@ -64,9 +84,29 @@ def main():
             publisher=args.publisher,
             db_path=args.db,
             use_llm=args.use_llm,
+            approval_timeout=args.approval_timeout,
         )
         try:
             return asyncio.run(proxy.run())
+        except KeyboardInterrupt:
+            return 0
+    if args.command == "gateway":
+        name = args.name or infer_server_name(args.target)
+        gateway = MCPGateway(
+            downstream=DownstreamConfig(
+                target=args.target,
+                cwd=args.cwd,
+                env=inherited_overrides(),
+            ),
+            server_name=name,
+            publisher=args.publisher,
+            db_path=args.db,
+            use_llm=args.use_llm,
+            approval_timeout=args.approval_timeout,
+        )
+        try:
+            asyncio.run(gateway.run())
+            return 0
         except KeyboardInterrupt:
             return 0
     return 1

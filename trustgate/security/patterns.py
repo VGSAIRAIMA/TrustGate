@@ -89,7 +89,8 @@ def regex_scan(text: str, normalize_first: bool = True) -> RegexScanResult:
     - matched: True if any pattern tripped, False otherwise.
     - matches: List of unique pattern names that matched.
     - details: List of PatternMatch items with exact match locations.
-    - risk_score: +20 risk points if flagged (aligned with ARCHITECTURE.md).
+        - risk_score: scanner-local diagnostic score of 20 if flagged. The policy
+            engine applies its independent configured weight of 40.
     """
     if not text:
         return RegexScanResult(matched=False, matches=[], details=[], risk_score=0, normalized_text="")

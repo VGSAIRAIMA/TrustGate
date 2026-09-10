@@ -12,6 +12,7 @@ from trustgate.security.llm_scanner import (
     LLMScanResult,
     llm_scan,
     parse_llm_json_response,
+    validate_llm_payload,
 )
 
 
@@ -43,9 +44,12 @@ class TestLLMScanner(unittest.TestCase):
                 {
                     "message": {
                         "content": json.dumps({
-                            "malicious": True,
-                            "confidence": 0.92,
+                            "classification": "malicious",
+                            "malicious_probability": 0.92,
+                            "uncertainty": 0.04,
+                            "severity": "high",
                             "reason": "Indirect prompt injection instructing model to disregard prior guidance.",
+                            "evidence": ["instruction override", "suspicious outgoing communication request"],
                         })
                     }
                 }
@@ -61,8 +65,11 @@ class TestLLMScanner(unittest.TestCase):
             res = llm_scan(self.reworded_variant, api_key="test-key-mock")
             self.assertFalse(res.is_inconclusive)
             self.assertTrue(res.malicious)
-            self.assertGreater(res.confidence, 0.8)
-            self.assertEqual(res.risk_score, 30)
+            self.assertGreater(res.malicious_probability, 0.8)
+            self.assertEqual(res.risk_score, 0)
+            self.assertEqual(res.uncertainty, 0.04)
+            self.assertEqual(res.severity, "high")
+            self.assertIn("instruction override", res.evidence)
             self.assertEqual(res.model_used, DEFAULT_OPENROUTER_MODEL)
             self.assertIn("disregard prior guidance", res.reason)
 
@@ -73,9 +80,12 @@ class TestLLMScanner(unittest.TestCase):
                 {
                     "message": {
                         "content": json.dumps({
-                            "malicious": False,
-                            "confidence": 0.05,
+                            "classification": "benign",
+                            "malicious_probability": 0.05,
+                            "uncertainty": 0.08,
+                            "severity": "low",
                             "reason": "Legitimate mathematical calculation description.",
+                            "evidence": ["ordinary calculator purpose"],
                         })
                     }
                 }
@@ -92,7 +102,7 @@ class TestLLMScanner(unittest.TestCase):
             self.assertFalse(res.is_inconclusive)
             self.assertFalse(res.malicious)
             self.assertEqual(res.risk_score, 0)
-            self.assertLessEqual(res.confidence, 0.8)
+            self.assertLessEqual(res.malicious_probability, 0.8)
 
     def test_network_error_degrades_gracefully(self):
         """Confirm network connection failure returns an INCONCLUSIVE result without crashing."""
@@ -141,14 +151,37 @@ class TestLLMScanner(unittest.TestCase):
             self.assertTrue(res.is_inconclusive)
             self.assertFalse(res.malicious)
             self.assertEqual(res.risk_score, 0)
-            self.assertIn("invalid or non-JSON response", res.reason)
+            self.assertIn("invalid structured response", res.reason)
 
     def test_parse_json_markdown_code_fences(self):
         """Confirm JSON enclosed in markdown code fences is parsed cleanly."""
-        raw = "```json\n{\"malicious\": true, \"confidence\": 0.95, \"reason\": \"test\"}\n```"
+        raw = "```json\n{\"classification\": \"malicious\", \"malicious_probability\": 0.95, \"uncertainty\": 0.02, \"severity\": \"high\", \"reason\": \"test\", \"evidence\": [\"override\"]}\n```"
         parsed = parse_llm_json_response(raw)
-        self.assertTrue(parsed["malicious"])
-        self.assertEqual(parsed["confidence"], 0.95)
+        normalized = validate_llm_payload(parsed)
+        self.assertEqual(normalized["classification"], "malicious")
+        self.assertEqual(normalized["malicious_probability"], 0.95)
+
+    def test_invalid_structured_fields_are_rejected(self):
+        with self.assertRaises(ValueError):
+            validate_llm_payload({
+                "classification": "malicious",
+                "malicious_probability": 1.4,
+                "uncertainty": 0.1,
+                "severity": "high",
+                "reason": "bad value",
+                "evidence": ["indicator"],
+            })
+
+    def test_binary_probability_without_conclusive_evidence_is_rejected(self):
+        with self.assertRaises(ValueError):
+            validate_llm_payload({
+                "classification": "benign",
+                "malicious_probability": 0.0,
+                "uncertainty": 0.8,
+                "severity": "low",
+                "reason": "uncertain",
+                "evidence": [],
+            })
 
     def test_empty_text_returns_skipped(self):
         res = llm_scan("", api_key="test-key")

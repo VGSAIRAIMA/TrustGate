@@ -12,7 +12,7 @@ Use exactly this. If a change seems necessary, stop and ask before substituting 
 | Diffing | `difflib.unified_diff` | Turns a hash mismatch into a human-readable line-level explanation. |
 | Normalization | `unicodedata` (NFKC + strip `Cf` category chars) | Defeats invisible-character and lookalike-letter obfuscation before any scanner runs. |
 | Pattern scanning | `re` (built-in) | Instant first-pass check for known attack phrasing. |
-| Semantic scanning | Anthropic API, model `claude-haiku-4-5-20251001` | Cheapest/fastest current tier, appropriate for narrow structured-JSON classification, not open-ended chat. Catches reworded/obfuscated attacks regex misses. |
+| Semantic scanning | OpenRouter API, model `openrouter/free` | Optional semantic tier for narrow structured-JSON classification. Catches reworded/obfuscated attacks regex misses and degrades visibly to inconclusive without a key. |
 | Storage | `sqlite3` (built-in) | Single local file, no server process — correct for a local, single-user MVP. |
 | Console | `rich` | Live-updating colored terminal panels. Zero browser/web-server dependency. |
 | Policy engine | Plain Python function | Deterministic weighted scoring, explicitly not an LLM decision and not a claimed industry standard. |
@@ -29,7 +29,7 @@ Use exactly this. If a change seems necessary, stop and ask before substituting 
 python3 -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install mcp anthropic rapidfuzz rich
-export ANTHROPIC_API_KEY="sk-ant-..."   # from console.anthropic.com, NOT your claude.ai login
+export OPENROUTER_API_KEY="sk-or-..."   # optional semantic scanning tier
 ```
 
 ## Packaging for real distribution (post-hackathon, or demo polish)

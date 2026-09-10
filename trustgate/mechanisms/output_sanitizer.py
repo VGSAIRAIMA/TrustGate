@@ -42,6 +42,13 @@ class SanitizeResult:
     redacted_spans: list[str] = field(default_factory=list)
     reason: str = ""
     risk_score: int = 0
+    llm_status: str = "not_run"
+    llm_confidence: float = 0.0
+    llm_reason: str = "LLM scan not run."
+    llm_classification: str = "not_run"
+    llm_uncertainty: float = 1.0
+    llm_severity: str = "low"
+    llm_evidence: list[str] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
@@ -116,6 +123,7 @@ def sanitize_output(
             injection_detected=False,
             reason="Empty output text; passed.",
             risk_score=0,
+            llm_reason="LLM scan not run because the output was empty.",
         )
 
     # 1. Normalize text
@@ -161,6 +169,7 @@ def sanitize_output(
                 redacted_spans=[norm_text[s:e] for s, e in merged_spans],
                 reason="Ambiguous/entangled payload: output is predominantly or entirely injection; escalated for human review.",
                 risk_score=40,
+                llm_reason="LLM scan not run because the regex tier already identified an injection.",
             )
 
         # Cleanly separable injection: perform redaction
@@ -192,6 +201,7 @@ def sanitize_output(
             redacted_spans=redacted_snippets,
             reason=f"Separable injection redacted ({len(redacted_snippets)} segment(s) removed).",
             risk_score=40,
+            llm_reason="LLM scan not run because the regex tier already identified an injection.",
         )
 
     # 3. Tier 2: Optional LLM Semantic Scan (when enabled or needed)
@@ -203,15 +213,38 @@ def sanitize_output(
             return SanitizeResult(
                 action=SanitizerAction.ESCALATE_FOR_REVIEW,
                 original_text=text,
-                sanitized_text=text,
-                is_modified=False,
+                sanitized_text="[REDACTED: withheld pending manual review]",
+                is_modified=True,
                 injection_detected=True,
                 redacted_spans=[],
                 reason=f"Semantic injection flagged by LLM (confidence: {llm_res.confidence:.2f}): {llm_res.reason}; escalated for human review.",
                 risk_score=40,
+                llm_status="completed",
+                llm_confidence=llm_res.confidence,
+                llm_reason=llm_res.reason,
+                llm_classification=llm_res.classification,
+                llm_uncertainty=llm_res.uncertainty,
+                llm_severity=llm_res.severity,
+                llm_evidence=llm_res.evidence,
             )
 
     # 4. Clean content: pass through unchanged
+    llm_status = "not_run"
+    llm_confidence = 0.0
+    llm_reason = "LLM scan not requested for this output."
+    llm_classification = "not_run"
+    llm_uncertainty = 1.0
+    llm_severity = "low"
+    llm_evidence: list[str] = []
+    if use_llm:
+        llm_status = "inconclusive" if llm_res.is_inconclusive else "completed"
+        llm_confidence = llm_res.confidence
+        llm_reason = llm_res.reason
+        llm_classification = llm_res.classification
+        llm_uncertainty = llm_res.uncertainty
+        llm_severity = llm_res.severity
+        llm_evidence = llm_res.evidence
+
     return SanitizeResult(
         action=SanitizerAction.PASS,
         original_text=text,
@@ -221,6 +254,13 @@ def sanitize_output(
         redacted_spans=[],
         reason="Clean output verified; passed without modification.",
         risk_score=0,
+        llm_status=llm_status,
+        llm_confidence=llm_confidence,
+        llm_reason=llm_reason,
+        llm_classification=llm_classification,
+        llm_uncertainty=llm_uncertainty,
+        llm_severity=llm_severity,
+        llm_evidence=llm_evidence,
     )
 
 
@@ -274,12 +314,13 @@ def sanitize_mcp_response(
             orig_text = item.get("text", "")
             res = sanitize_output(orig_text, use_llm=use_llm, api_key=api_key, replacement=replacement)
             last_res = res
-            if res.was_redacted:
+            if res.was_redacted or res.escalated:
                 item["text"] = res.sanitized_text
                 modified = True
-                overall_action = SanitizerAction.REDACTED
-            elif res.escalated:
-                overall_action = SanitizerAction.ESCALATE_FOR_REVIEW
+                if res.escalated:
+                    overall_action = SanitizerAction.ESCALATE_FOR_REVIEW
+                else:
+                    overall_action = SanitizerAction.REDACTED
 
     if last_res:
         return new_response, SanitizeResult(
@@ -291,6 +332,13 @@ def sanitize_mcp_response(
             redacted_spans=last_res.redacted_spans,
             reason=last_res.reason,
             risk_score=last_res.risk_score,
+            llm_status=last_res.llm_status,
+            llm_confidence=last_res.llm_confidence,
+            llm_reason=last_res.llm_reason,
+            llm_classification=last_res.llm_classification,
+            llm_uncertainty=last_res.llm_uncertainty,
+            llm_severity=last_res.llm_severity,
+            llm_evidence=last_res.llm_evidence,
         )
 
     return response_msg, SanitizeResult(

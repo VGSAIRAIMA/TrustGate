@@ -68,9 +68,10 @@ class TestEndToEndDemo(unittest.IsolatedAsyncioTestCase):
         # Confirm audit event was recorded with HOLD decision and risk 40
         events_scene1 = get_events(server="fireb4se-mcp-server", db_path=self.db_path)
         self.assertTrue(len(events_scene1) > 0)
-        self.assertEqual(events_scene1[0]["decision"], "HOLD")
-        self.assertEqual(events_scene1[0]["risk"], 40)
-        self.assertIn("typosquatting", events_scene1[0]["detail"].lower())
+        manifest_event = next(event for event in events_scene1 if event["event_type"] == "MANIFEST_INSPECTION")
+        self.assertEqual(manifest_event["decision"], "HOLD")
+        self.assertEqual(manifest_event["risk"], 40)
+        self.assertIn("typosquatting", manifest_event["detail"].lower())
 
         # ---------------------------------------------------------------------
         # SCENE 2: Approve the clean Calculator (Stage 8, 9)

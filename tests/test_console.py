@@ -95,7 +95,7 @@ class TestConsoleDashboard(unittest.TestCase):
             signals={"fingerprint_changed": True, "regex_flagged": True, "llm_flagged": True},
             reasons=[
                 "Fingerprint alert: tool contract mutated (+20).",
-                "Regex alert: known prompt injection patterns (+20).",
+                "Regex alert: known prompt injection patterns (+40).",
                 "LLM alert: malicious exfiltration instruction (+30).",
             ],
         )

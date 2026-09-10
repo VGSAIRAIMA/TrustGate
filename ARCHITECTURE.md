@@ -1,7 +1,8 @@
 # Architecture
 
 ## System type
-A **local CLI stdio proxy**. This is explicitly NOT a client-server web application.
+A **local CLI stdio proxy and MCP-compatible gateway**. This is explicitly NOT a
+client-server web application.
 No backend service, database server, or HTTP layer is required for the core system.
 
 ```
@@ -17,6 +18,10 @@ Agent (Claude Desktop / Claude Code / Antigravity)
 
 TrustGate is invisible to both sides: the agent believes it's talking to the real server,
 the real server believes it's talking to the agent.
+
+The existing `run` command provides the transparent raw JSON-RPC proxy. The `gateway`
+command provides an MCP SDK server endpoint to the agent and an MCP SDK client session
+to one configured downstream server. Both modes reuse the same inspection engine.
 
 ## Why no backend/web server for the core
 MCP servers of this kind communicate over stdio, not HTTP. There is no request/response
@@ -48,9 +53,9 @@ raw bytes
 raw bytes
   -> parser.parse_message()
   -> normalizer.normalize_text()
-  -> output_sanitizer.sanitize_output()   # reuses regex_scan + llm_scan
-  -> policy.decide(is_output_injection=...)
-  -> console.show_event(...)
+  -> output_sanitizer.sanitize_mcp_response()  # sanitizes each text item
+  -> policy.decide(is_output_injection=...)    # records deterministic risk
+  -> console.show_sanitization_event(...)      # only when redacted/escalated
 
   PASS               -> forward unchanged
   REDACTED           -> forward the cleaned text only
@@ -69,11 +74,13 @@ every check that ever ran, its risk score, its decision, and why, in order.
 ## Module map
 See PROJECT_STRUCTURE.md for the exact folder tree. In short:
 - `trustgate/proxy/` — core.py (stdio bridge), parser.py (message classification)
-- `trustgate/security/` — normalizer.py, patterns.py (regex), llm_scanner.py (Haiku)
+- `trustgate/security/` — normalizer.py, patterns.py (regex), llm_scanner.py (OpenRouter)
 - `trustgate/mechanisms/` — fingerprint.py, mutation.py, registry.py, output_sanitizer.py
 - `trustgate/storage/` — database.py (SQLite vault + event log)
 - `trustgate/policy/` — engine.py (deterministic weighted-scoring decision function)
 - `trustgate/console/` — dashboard.py (rich terminal panels)
+- `trustgate/proxy/adapter.py` — configurable downstream MCP command adapter
+- `trustgate/proxy/gateway.py` — MCP server/client gateway mode
 - `servers/` — the 3 demo MCP servers + poisoned/benign-update variants
 
 ## Optional stretch goal: read-only browser dashboard
@@ -93,7 +100,7 @@ absolute in the pitch — say it's true of the MVP core, not the optional viewer
 risk = 0
 +40 if registry_flagged
 +20 if fingerprint_changed
-+20 if regex_flagged
++40 if regex_flagged
 +30 if llm_confidence > 0.8
 +40 if is_output_injection
 

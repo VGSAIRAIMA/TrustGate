@@ -16,13 +16,15 @@ mcp-trustgate/
 │   ├── main.py                    # Stage 3 — CLI entrypoint (argparse)
 │   ├── proxy/
 │   │   ├── __init__.py
-│   │   ├── core.py                # Stage 4 — asyncio stdio bridge
+│   │   ├── core.py                # Stage 4 — asyncio raw stdio bridge
+│   │   ├── adapter.py             # Configurable downstream MCP command
+│   │   ├── gateway.py             # MCP server/client gateway mode
 │   │   └── parser.py              # Stage 6 — message classification
 │   ├── security/
 │   │   ├── __init__.py
 │   │   ├── normalizer.py          # Stage 7 — unicode normalization
 │   │   ├── patterns.py            # Stage 12 — regex scanner
-│   │   └── llm_scanner.py         # Stage 13 — Claude Haiku semantic scanner
+│   │   └── llm_scanner.py         # Stage 13 — OpenRouter semantic scanner
 │   ├── mechanisms/
 │   │   ├── __init__.py
 │   │   ├── fingerprint.py         # Stage 8

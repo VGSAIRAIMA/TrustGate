@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TrustGate CLI Launcher</title>
+  <style>
+    :root { color-scheme: dark; --ink: #e7edf5; --muted: #91a0b3; --line: #2a394c; --panel: #111b28; --accent: #58d6a3; --warn: #f0c674; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; color: var(--ink); background: #08111d; font: 16px/1.5 "Segoe UI", sans-serif; }
+    main { width: min(880px, calc(100% - 32px)); margin: 7vh auto; }
+    .eyebrow { color: var(--accent); font: 700 12px/1.2 Consolas, monospace; letter-spacing: .12em; }
+    h1 { margin: 10px 0 8px; font-size: clamp(30px, 5vw, 54px); line-height: 1; }
+    p { color: var(--muted); max-width: 650px; }
+    .panel { margin-top: 28px; padding: 24px; border: 1px solid var(--line); background: var(--panel); box-shadow: 0 18px 50px #0006; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    label { display: grid; gap: 7px; color: var(--muted); font-size: 13px; }
+    input { width: 100%; padding: 11px 12px; color: var(--ink); background: #0b1522; border: 1px solid var(--line); font: 14px Consolas, monospace; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+    button { padding: 11px 16px; border: 1px solid var(--accent); color: #06120f; background: var(--accent); font-weight: 700; cursor: pointer; }
+    button.secondary { color: var(--ink); background: transparent; border-color: var(--line); }
+    button:focus-visible, input:focus-visible { outline: 2px solid var(--warn); outline-offset: 2px; }
+    pre { margin: 20px 0 0; padding: 16px; overflow-x: auto; color: var(--accent); background: #07101a; border: 1px solid var(--line); font: 14px/1.5 Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+    .note { margin-top: 16px; font-size: 13px; }
+    @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } main { margin-top: 32px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">MCP RUNTIME SECURITY GATEWAY</div>
+    <h1>TrustGate CLI</h1>
+    <p>Choose the MCP server command, generate a self-contained PowerShell command, and copy it into any terminal.</p>
+    <section class="panel" aria-label="CLI command builder">
+      <div class="grid">
+        <label>Target command
+          <input id="target" value="python servers/calculator.py" spellcheck="false">
+        </label>
+        <label>Server name (optional)
+          <input id="name" placeholder="calculator" spellcheck="false">
+        </label>
+        <label>Publisher (optional)
+          <input id="publisher" placeholder="trustgate-demo" spellcheck="false">
+        </label>
+        <label>SQLite database
+          <input id="db" value="trustgate.db" spellcheck="false">
+        </label>
+      </div>
+      <div class="actions">
+        <button id="cli" type="button">CLI</button>
+        <button id="copy" class="secondary" type="button">Copy command</button>
+      </div>
+      <pre id="command" aria-live="polite"></pre>
+      <div id="status" class="note" role="status"></div>
+    </section>
+  </main>
+  <script>
+    const fields = ["target", "name", "publisher", "db"].map((id) => document.getElementById(id));
+    const output = document.getElementById("command");
+    const status = document.getElementById("status");
+    const quote = (value) => `"${value.replaceAll('"', '\\"')}"`;
+    const repoPath = () => {
+      const path = decodeURIComponent(window.location.pathname);
+      const directory = path.slice(0, path.lastIndexOf("/") + 1);
+      return directory.replace(/^\/+/, "").replaceAll("/", "\\");
+    };
+    const command = () => {
+      const [target, name, publisher, db] = fields.map((field) => field.value.trim());
+      const venvScripts = repoPath() + ".venv\\Scripts";
+      const parts = ["Set-Location -LiteralPath", quote(repoPath()), ";", "$env:Path =", quote(venvScripts), "+ ';' + $env:Path;", "&", quote(venvScripts + "\\python.exe"), quote(repoPath() + "trustgate\\main.py"), "run", "--target", quote(target)];
+      if (name) parts.push("--name", quote(name));
+      if (publisher) parts.push("--publisher", quote(publisher));
+      if (db) parts.push("--db", quote(db));
+      return parts.join(" ");
+    };
+    const render = () => { output.textContent = command(); };
+    fields.forEach((field) => field.addEventListener("input", render));
+    document.getElementById("cli").addEventListener("click", () => { render(); status.textContent = "CLI command ready."; });
+    document.getElementById("copy").addEventListener("click", async () => {
+      render();
+      try { await navigator.clipboard.writeText(output.textContent); status.textContent = "Copied. Paste this command into your terminal."; }
+      catch { status.textContent = "Clipboard access was blocked. Select the command above and copy it manually."; }
+    });
+    render();
+  </script>
+</body>
+</html>

@@ -20,6 +20,7 @@ import shlex
 import shutil
 import sys
 import threading
+import uuid
 from typing import Any
 
 from trustgate.console.dashboard import show_event, show_sanitization_event
@@ -28,9 +29,11 @@ from trustgate.mechanisms.output_sanitizer import sanitize_mcp_response
 from trustgate.policy.engine import (
     PolicyAction,
     PolicyDecision,
+    decide,
     evaluate_tool_manifest,
 )
 from trustgate.proxy.parser import parse_message
+from trustgate.proxy.approval import ApprovalAction, ApprovalHandler, ApprovalManager, PendingApproval
 from trustgate.storage.database import (
     DEFAULT_DB_PATH,
     get_tool,
@@ -52,6 +55,8 @@ class StdioProxy:
         use_llm: bool = False,
         api_key: str | None = None,
         auto_pin_approved: bool = True,
+        approval_timeout: float = 30.0,
+        approval_handler: ApprovalHandler | None = None,
     ):
         self.target_cmd = target_cmd
         self.server_name = server_name
@@ -60,6 +65,7 @@ class StdioProxy:
         self.use_llm = use_llm
         self.api_key = api_key
         self.auto_pin_approved = auto_pin_approved
+        self.approvals = ApprovalManager(timeout=approval_timeout, handler=approval_handler)
 
         self.proc: asyncio.subprocess.Process | None = None
         self.stdin_queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -69,6 +75,8 @@ class StdioProxy:
         self.blocked_tools: set[str] = set()
         self.held_tools: set[str] = set()
         self.approved_tools: set[str] = set()
+        self._held_decisions: dict[str, PolicyDecision] = {}
+        self._held_manifests: dict[str, dict[str, Any]] = {}
 
         # Initialize SQLite database
         init_db(self.db_path)
@@ -143,6 +151,26 @@ class StdioProxy:
                     sys.stdout.buffer.write(err_bytes)
                     sys.stdout.buffer.flush()
                     continue
+                if t_name and t_name in self.held_tools:
+                    decision = self._held_decisions[t_name]
+                    action = await self._request_approval(server, t_name, decision, parsed.data.get("id"))
+                    if action == ApprovalAction.BLOCK or action == ApprovalAction.REJECT_UPDATE:
+                        req_id = parsed.data.get("id") if parsed.data else None
+                        err_resp = {
+                            "jsonrpc": "2.0",
+                            "id": req_id,
+                            "error": {"code": -32600, "message": f"TrustGate Security Policy: Tool '{t_name}' approval denied."},
+                        }
+                        sys.stdout.buffer.write((json.dumps(err_resp) + "\n").encode("utf-8"))
+                        sys.stdout.buffer.flush()
+                        continue
+                    if action == ApprovalAction.APPROVE_UPDATE:
+                        manifest = self._held_manifests[t_name]
+                        save_tool(server, t_name, compute_tool_fingerprint(manifest), manifest, db_path=self.db_path)
+                        self.held_tools.discard(t_name)
+                        self.approved_tools.add(t_name)
+                        self._held_decisions.pop(t_name, None)
+                        self._held_manifests.pop(t_name, None)
 
             if self.proc and self.proc.stdin and not self.proc.stdin.is_closing():
                 data = line.encode("utf-8") if isinstance(line, str) else line
@@ -185,9 +213,39 @@ class StdioProxy:
                 event_type="MANIFEST_INSPECTION",
                 risk=decision.risk_score,
                 decision=decision.action.value,
-                detail="; ".join(decision.reasons) or "Clean manifest",
+                detail=json.dumps(
+                    {
+                        "reasons": decision.reasons,
+                        "signals": decision.signals,
+                        "assessment": decision.as_dict(),
+                        "diff": decision.diff,
+                        "tool_name": t_name,
+                    }
+                ),
                 db_path=self.db_path,
             )
+            audit_detail = json.dumps({
+                "request_id": uuid.uuid4().hex,
+                "tool": t_name,
+                "reasons": decision.reasons,
+                "assessment": decision.as_dict(),
+                "fingerprint_status": decision.evidence.get("fingerprint_status"),
+            })
+            for event_type in ("TOOL_DISCOVERY", "POLICY_DECISION"):
+                log_event(
+                    server=server,
+                    event_type=event_type,
+                    risk=decision.risk_score,
+                    decision=decision.action.value,
+                    detail=audit_detail,
+                    db_path=self.db_path,
+                )
+            if decision.evidence.get("regex_findings"):
+                log_event(server, "REGEX_FINDING", decision.risk_score, decision.action.value, audit_detail, db_path=self.db_path)
+            if decision.llm_result:
+                log_event(server, "LLM_ANALYSIS", decision.risk_score, decision.action.value, audit_detail, db_path=self.db_path)
+            if decision.evidence.get("fingerprint_status") == "changed":
+                log_event(server, "FINGERPRINT_CHANGE", decision.risk_score, decision.action.value, audit_detail, db_path=self.db_path)
 
             # Display panel to stderr console
             show_event(decision, server=server, tool_name=t_name)
@@ -195,11 +253,14 @@ class StdioProxy:
             # Policy enforcement
             if decision.action == PolicyAction.BLOCK:
                 self.blocked_tools.add(t_name)
+                log_event(server, "BLOCK", decision.risk_score, decision.action.value, audit_detail, db_path=self.db_path)
                 # Withhold tool from manifest forwarded to agent
                 continue
             elif decision.action == PolicyAction.HOLD:
                 self.held_tools.add(t_name)
-                # Forward with hold status logged
+                self._held_decisions[t_name] = decision
+                self._held_manifests[t_name] = dict(tool)
+                # Forward the tool so calls can enter the async approval flow.
                 allowed_tools.append(tool)
             else:
                 # ALLOW
@@ -207,12 +268,55 @@ class StdioProxy:
                 if self.auto_pin_approved:
                     fp = compute_tool_fingerprint(tool)
                     save_tool(server, t_name, fp, tool, db_path=self.db_path)
+                    log_event(server, "FINGERPRINT_CREATED", decision.risk_score, decision.action.value, audit_detail, db_path=self.db_path)
+                log_event(server, "ALLOW", decision.risk_score, decision.action.value, audit_detail, db_path=self.db_path)
                 allowed_tools.append(tool)
 
         # Construct updated response
         new_data = deepcopy(parsed_data)
         new_data["result"]["tools"] = allowed_tools
         return new_data, decisions
+
+    async def _request_approval(
+        self,
+        server: str,
+        tool_name: str,
+        decision: PolicyDecision,
+        request_id: Any,
+    ) -> ApprovalAction:
+        approval_id = str(request_id) if request_id is not None else uuid.uuid4().hex
+        old_record = get_tool(server, tool_name, db_path=self.db_path) or {}
+        manifest = self._held_manifests.get(tool_name, {})
+        pending = PendingApproval(
+            request_id=approval_id,
+            server=server,
+            tool=tool_name,
+            risk_score=decision.risk_score,
+            severity=decision.severity,
+            reason="; ".join(decision.reasons) or "TrustGate policy requires approval.",
+            evidence=list(decision.evidence.get("regex_findings", [])),
+            old_hash=old_record.get("fingerprint", ""),
+            new_hash=compute_tool_fingerprint(manifest) if manifest else "",
+            fingerprint_change=decision.evidence.get("fingerprint_status") == "changed",
+        )
+        log_event(
+            server=server,
+            event_type="HOLD",
+            risk=decision.risk_score,
+            decision=decision.action.value,
+            detail=json.dumps({"request_id": approval_id, "tool": tool_name, "pending": pending.as_dict()}),
+            db_path=self.db_path,
+        )
+        _, action = await self.approvals.request(pending)
+        log_event(
+            server=server,
+            event_type=action.value,
+            risk=decision.risk_score,
+            decision=decision.action.value,
+            detail=json.dumps({"request_id": approval_id, "tool": tool_name, "user_action": action.value}),
+            db_path=self.db_path,
+        )
+        return action
 
     def _process_output_response(
         self,
@@ -227,12 +331,47 @@ class StdioProxy:
         )
 
         if res.was_redacted or res.escalated:
+            policy_decision = decide(
+                is_output_injection=res.injection_detected,
+                server=server,
+                tool_name="tool_call",
+            )
             log_event(
                 server=server,
                 event_type="OUTPUT_SANITIZATION",
-                risk=res.risk_score,
+                risk=policy_decision.risk_score,
                 decision=res.action.value,
-                detail=res.reason,
+                detail=json.dumps(
+                    {
+                        "policy_action": policy_decision.action.value,
+                        "policy_reasons": policy_decision.reasons,
+                        "assessment": policy_decision.as_dict(),
+                        "reason": res.reason,
+                        "original_text": res.original_text,
+                        "sanitized_text": res.sanitized_text,
+                        "is_modified": res.is_modified,
+                        "injection_detected": res.injection_detected,
+                        "redacted_spans": res.redacted_spans,
+                        "signals": {
+                            "is_output_injection": res.injection_detected,
+                            "llm_status": res.llm_status,
+                            "llm_confidence": res.llm_confidence,
+                            "llm_reason": res.llm_reason,
+                            "llm_classification": res.llm_classification,
+                            "llm_uncertainty": res.llm_uncertainty,
+                            "llm_severity": res.llm_severity,
+                            "llm_evidence": res.llm_evidence,
+                        },
+                    }
+                ),
+                db_path=self.db_path,
+            )
+            log_event(
+                server=server,
+                event_type="OUTPUT_THREAT",
+                risk=policy_decision.risk_score,
+                decision=policy_decision.action.value,
+                detail=json.dumps({"assessment": policy_decision.as_dict(), "tool": "tool_call"}),
                 db_path=self.db_path,
             )
             show_sanitization_event(res, server=server)
@@ -295,6 +434,15 @@ class StdioProxy:
     async def run(self) -> int:
         """Launch target MCP server and run bidirectional inspecting proxy."""
         self.loop = asyncio.get_running_loop()
+        server = self._infer_server_name()
+        log_event(
+            server=server,
+            event_type="MCP_CONNECTION",
+            risk=0,
+            decision="ALLOW",
+            detail=json.dumps({"event_id": uuid.uuid4().hex, "status": "connected"}),
+            db_path=self.db_path,
+        )
 
         parts = shlex.split(self.target_cmd, posix=(sys.platform != "win32"))
         if not parts:
@@ -338,5 +486,13 @@ class StdioProxy:
                     await self.proc.wait()
                 except Exception:
                     pass
+            log_event(
+                server=server,
+                event_type="MCP_DISCONNECTION",
+                risk=0,
+                decision="ALLOW",
+                detail=json.dumps({"event_id": uuid.uuid4().hex, "status": "disconnected"}),
+                db_path=self.db_path,
+            )
 
         return self.proc.returncode if self.proc and self.proc.returncode is not None else 0

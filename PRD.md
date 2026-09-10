@@ -37,7 +37,7 @@ untrusted tool output before it re-enters the agent's context.
    on mismatch, produce a line-level diff so the user sees exactly what changed.
 3. **Description Scanner** — normalize (strip invisible/zero-width Unicode, NFKC
    lookalike-letter folding) → fast regex/keyword tier → LLM semantic tier
-   (Claude Haiku 4.5) for reworded/obfuscated variants regex misses.
+   (OpenRouter free router) for reworded/obfuscated variants regex misses.
 4. **Output Sanitizer** — the same normalize → regex → LLM pipeline, applied to tool
    *output* instead of descriptions. High-confidence, cleanly-separable injections are
    redacted; ambiguous/entangled cases escalate to a human instead of guessing.

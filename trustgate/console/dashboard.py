@@ -58,9 +58,28 @@ def format_signals_table(signals: dict[str, Any]) -> Table:
         if signals["llm_flagged"]:
             conf = signals.get("llm_confidence", 0.0)
             status = f"[red]MALICIOUS ({conf:.0%} confidence)[/red]"
+        elif signals.get("llm_status") == "not_run":
+            status = "[yellow]NOT RUN[/yellow]"
+        elif signals.get("llm_status") == "inconclusive":
+            status = "[yellow]INCONCLUSIVE[/yellow]"
         else:
-            status = "[green]CLEAN / INCONCLUSIVE[/green]"
+            status = "[green]CLEAN[/green]"
         table.add_row("LLM Semantic:", status)
+        confidence = signals.get("llm_confidence")
+        if confidence is not None:
+            table.add_row("LLM Probability:", f"[cyan]{confidence:.0%}[/cyan]")
+        if signals.get("llm_classification"):
+            table.add_row("LLM Classification:", f"[cyan]{str(signals['llm_classification']).upper()}[/cyan]")
+        if signals.get("llm_uncertainty") is not None:
+            table.add_row("LLM Uncertainty:", f"[cyan]{signals['llm_uncertainty']:.0%}[/cyan]")
+        if signals.get("llm_severity"):
+            table.add_row("LLM Severity:", f"[cyan]{str(signals['llm_severity']).upper()}[/cyan]")
+        if signals.get("llm_reason"):
+            table.add_row("LLM Explanation:", signals["llm_reason"])
+        for indicator in signals.get("llm_evidence", []):
+            table.add_row("LLM Evidence:", f"[yellow]- {indicator}[/yellow]")
+        if signals.get("llm_status") == "inconclusive" and signals.get("llm_reason"):
+            table.add_row("LLM Detail:", f"[yellow]{signals['llm_reason']}[/yellow]")
 
     if "is_output_injection" in signals:
         status = "[red]INJECTION DETECTED[/red]" if signals["is_output_injection"] else "[green]CLEAN[/green]"
@@ -114,7 +133,7 @@ def create_decision_panel(
     if decision.reasons:
         elements.append(Text("Policy Triggers:", style="bold underline"))
         for reason in decision.reasons:
-            elements.append(Text(f"  • {reason}", style=f"{color}"))
+            elements.append(Text(f"  - {reason}", style=f"{color}"))
         elements.append(Text(""))
 
     # 4. Unified Diff (if mutation occurred)
@@ -135,7 +154,7 @@ def create_decision_panel(
         )
         elements.append(diff_panel)
 
-    title = f"🛡️  [bold]TrustGate Security Policy — [{color}]{decision.action.value}[/{color}][/bold]"
+    title = f"[bold]TrustGate Security Policy - [{color}]{decision.action.value}[/{color}][/bold]"
     return Panel(
         Group(*elements),
         title=title,
@@ -173,6 +192,11 @@ def create_sanitization_panel(
     meta_table.add_row("Tool Output:", f"[white]{t_name}[/white]")
     meta_table.add_row("Action:", f"[bold {color}]{badge}[/bold {color}]")
     meta_table.add_row("Risk Score:", f"[{color}]{result.risk_score} / 100[/{color}]")
+    if result.llm_status != "not_run":
+        meta_table.add_row("LLM Classification:", f"[cyan]{result.llm_classification.upper()}[/cyan]")
+        meta_table.add_row("LLM Probability:", f"[cyan]{result.llm_confidence:.0%}[/cyan]")
+        meta_table.add_row("LLM Uncertainty:", f"[cyan]{result.llm_uncertainty:.0%}[/cyan]")
+        meta_table.add_row("LLM Severity:", f"[cyan]{result.llm_severity.upper()}[/cyan]")
 
     elements.append(meta_table)
     elements.append(Text(""))
@@ -187,7 +211,12 @@ def create_sanitization_panel(
             elements.append(Text(f"  [-] {span}", style="red strike"))
         elements.append(Text(""))
 
-    title = f"🧹  [bold]TrustGate Output Sanitizer — [{color}]{badge}[/{color}][/bold]"
+    if result.llm_evidence:
+        elements.append(Text("LLM Evidence:", style="bold underline"))
+        elements.extend(Text(f"  - {indicator}", style="yellow") for indicator in result.llm_evidence)
+        elements.append(Text(""))
+
+    title = f"[bold]TrustGate Output Sanitizer - [{color}]{badge}[/{color}][/bold]"
     return Panel(
         Group(*elements),
         title=title,
