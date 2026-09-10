@@ -1,7 +1,7 @@
 # Project Status: MCP TrustGate
 
 ## Current Stage
-**Stage 7 & Stage 8: COMPLETE**
+**Stage 9 & Stage 10: COMPLETE**
 
 ## Completed Stages Summary
 - **Stage 1: Environment Setup (COMPLETE)**
@@ -41,6 +41,14 @@
   - Computes SHA-256 client-side (`compute_tool_fingerprint`, `compute_manifest_fingerprint`).
   - Enforces client-side security constraint: any server-supplied `hash` or `fingerprint` keys are stripped and ignored.
   - Verified in `tests/test_fingerprint.py` (order invariance, collision-free mutation detection, server spoof rejection).
+- **Stage 9: SQLite Vault (COMPLETE)**
+  - `trustgate/storage/database.py`: Implements `tools` trust vault (pinned fingerprints and manifests) and `events` table (audit event log).
+  - Explicit connection closure prevents Windows file-locking issues.
+  - Verified schema initialization and cross-restart row persistence in `tests/test_database.py`.
+- **Stage 10: Mutation & Diff Engine (COMPLETE)**
+  - `trustgate/mechanisms/mutation.py`: `check_mutation()` verifies incoming fingerprints against SQLite vault.
+  - Emits line-level `difflib.unified_diff` on hash mismatch detailing exact description mutations.
+  - Verified with clean calculator vs poisoned calculator rug-pull in `tests/test_mutation.py`.
 
 ## Environment & API Key Notes
 - `venv/` is local and ignored by Git.
@@ -48,7 +56,7 @@
 - **Important Reminder:** OpenRouter API key will be needed before starting Stage 13 (LLM Scanner). The user will be reminded to configure it at that point.
 
 ## Next Stage
-**Stage 9 — SQLite Vault**
-- Implementation of `trustgate/storage/database.py`.
-- Schema: `tools` table (pinned fingerprints) and `events` table (audit log).
-- DoD: `init_db()` creates `tools` and `events` tables; a row survives a process restart.
+**Stage 11 — Registry Identity Check**
+- Implementation of `trustgate/mechanisms/registry.py`.
+- Pre-approval screening using `rapidfuzz` against a curated known-good registry list to detect typosquatting/impersonation (e.g. `fireb4se-mcp-server` vs `firebase-mcp-server`).
+- DoD: `fireb4se-mcp-server` against known `firebase-mcp-server` scores similarity > 0.90 with a mismatched publisher and is flagged. A genuinely new, non-similar name is not.
