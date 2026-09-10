@@ -1,7 +1,7 @@
 # Project Status: MCP TrustGate
 
 ## Current Stage
-**Stage 2: COMPLETE**
+**Stage 3 & Stage 4: COMPLETE**
 
 ## Completed Stages Summary
 - **Stage 1: Environment Setup (COMPLETE)**
@@ -16,12 +16,23 @@
   - `servers/docs_search.py`: Internal docs search server providing clean documents and a poisoned document scenario (`leave_policy_poisoned`) for output sanitization testing.
   - `servers/email_tool.py`: Outgoing email tool server simulating dispatch.
   - All 5 servers tested and verified to start and idle waiting on stdio per Definition of Done.
+- **Stage 3: CLI Shell (COMPLETE)**
+  - `trustgate/main.py`: CLI entrypoint built using `argparse`, supporting `trustgate run --target "<command>"`.
+  - Output diagnostics and banners are directed to `sys.stderr` so `sys.stdout` remains pure JSON-RPC for standard MCP clients.
+  - Verified launch line printing and clean exit.
+- **Stage 4: Raw Passthrough Proxy (COMPLETE)**
+  - `trustgate/proxy/core.py`: `StdioProxy` class implementing asynchronous bidirectional stdio bridging between MCP client and server child process.
+  - Platform-resilient stdin handling: dedicated background reader thread feeding an `asyncio.Queue` avoids Windows IOCP pipe limitations (`WinError 6`).
+  - Outbound server responses on `proc.stdout` flushed immediately to `sys.stdout.buffer` with zero delay.
+  - Subprocess `proc.stderr` streamed directly to `sys.stderr.buffer`.
+  - Graceful lifecycle and EOF handling ensures remaining buffered server responses drain completely before process exit.
+  - Verification: Piped raw JSON-RPC messages; confirmed byte-for-byte identical output between direct calculator server and TrustGate proxy across `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 
 ## Environment & Secrets
 - `venv/` is local and ignored by Git.
 - No API keys, `.env` files, credentials, or secrets committed.
 
 ## Next Stage
-**Stage 3 — CLI Shell**
-- Implementation of `trustgate/main.py` CLI entrypoint using `argparse`.
-- DoD: `python3 trustgate/main.py run --target "python3 servers/calculator.py"` prints launch line and exits cleanly.
+**Stage 5 — Wire into agent config**
+- Configure MCP agent (Claude Desktop, Claude Code, or Antigravity) config to route through `trustgate run --target "..."`.
+- DoD: Tool callable end-to-end through the proxy from the agent application.
