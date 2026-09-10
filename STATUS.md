@@ -1,7 +1,7 @@
 # Project Status: MCP TrustGate
 
 ## Current Stage
-**Stage 13: COMPLETE**
+**Stage 14: COMPLETE**
 
 ## Completed Stages Summary
 - **Stage 1: Environment Setup (COMPLETE)**
@@ -63,7 +63,12 @@
   - Analyzes normalized text against fixed JSON contract (`malicious`, `confidence`, `reason`).
   - Implements robust graceful degradation: returns `is_inconclusive=True` (without crashing or blocking) on missing API key, network/connection errors, rate limits (HTTP 429), or malformed/non-JSON responses.
   - Verified in `tests/test_llm_scanner.py` (DoD met: reworded attack variant correctly detected with `malicious: true` and confidence > 0.8; full error matrix verified to degrade gracefully as inconclusive).
-  - Test suite status: 49/49 tests passed.
+- **Stage 14: Output Sanitizer (COMPLETE)**
+  - `trustgate/mechanisms/output_sanitizer.py`: Sanitizes untrusted tool output from outbound `tools/call` responses before it re-enters agent context.
+  - Employs sentence boundary expansion and redaction for cleanly separable injections while preserving legitimate content.
+  - Implements three-way decision model: `PASS` (clean), `REDACTED` (cleanly separable), and `ESCALATE_FOR_REVIEW` (entangled/predominantly malicious).
+  - Verified in `tests/test_output_sanitizer.py` (DoD met: querying poisoned doc returns clean sentences with injection redacted; querying clean doc passes through unchanged).
+  - Test suite status: 56/56 tests passed.
 
 ## Environment & API Key Notes
 - `venv/` is local and ignored by Git.
@@ -71,8 +76,14 @@
 - OpenRouter integration completed using `openrouter/free`.
 
 ## Next Stage
-**Stage 14 — Output Sanitizer**
-- Implementation of `trustgate/mechanisms/output_sanitizer.py`.
-- Reuses regex_scan and llm_scan pipeline on tool output (outbound `tools/call` response).
-- High-confidence separable injections redacted while allowing legitimate content to pass through; ambiguous/entangled cases escalate.
-- DoD: querying the poisoned doc returns the clean sentences with the injected instruction redacted; querying the clean doc passes through unchanged.
+**Stage 15 — Policy Engine**
+- Implementation of `trustgate/policy/engine.py`.
+- Deterministic weighted scoring combining all signals:
+  `risk = 0`
+  `+40 if registry_flagged`
+  `+20 if fingerprint_changed`
+  `+20 if regex_flagged`
+  `+30 if llm_confidence > 0.8`
+  `+40 if is_output_injection`
+  Decision: `risk >= 60 -> BLOCK`, `risk >= 20 -> HOLD`, `else -> ALLOW`.
+- DoD: run all 5 demo scenarios through `decide()` and confirm each lands on the intended action (poisoned calculator -> BLOCK; benign version bump -> HOLD, never BLOCK). Tune weights until true, then stop tuning.
