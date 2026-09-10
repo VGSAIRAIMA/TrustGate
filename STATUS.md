@@ -1,7 +1,7 @@
 # Project Status: MCP TrustGate
 
 ## Current Stage
-**Stage 15: COMPLETE**
+**Stage 16: COMPLETE**
 
 ## Completed Stages Summary
 - **Stage 1: Environment Setup (COMPLETE)**
@@ -78,7 +78,12 @@
     `+40 if is_output_injection`
     Decision: `risk >= 60 -> BLOCK`, `risk >= 20 -> HOLD`, `else -> ALLOW`.
   - Verified in `tests/test_policy_engine.py` (DoD met: all 5 demo scenarios confirmed to land on exact intended policy action — poisoned calculator lands on `BLOCK`, benign version bump lands on `HOLD`, never BLOCK).
-  - Test suite status: 59/59 tests passed.
+- **Stage 16: Rich Terminal Console (COMPLETE)**
+  - `trustgate/console/dashboard.py`: Live terminal panels built with `rich` showing server, tool, risk score, policy decision badge, active indicators table, and syntax-highlighted unified diffs.
+  - Color-coded: `ALLOW` in green, `HOLD` in yellow, `BLOCK` in red.
+  - Configured to `sys.stderr` to keep `sys.stdout` pure JSON-RPC for standard MCP clients.
+  - Verified in `tests/test_console.py` (DoD met: live panels verified for green/yellow/red rendering, score metrics, diff embedding, and output sanitization panels).
+  - Test suite status: 64/64 tests passed.
 
 ## Environment & API Key Notes
 - `venv/` is local and ignored by Git.
@@ -86,8 +91,7 @@
 - OpenRouter integration completed using `openrouter/free`.
 
 ## Next Stage
-**Stage 16 — Rich Terminal Console**
-- Implementation of `trustgate/console/dashboard.py`.
-- Live terminal panel display using `rich` showing server, risk score, decision, and diff (when present), color-coded green/yellow/red.
-- Zero web server / browser dependencies.
-- DoD: live panel shows server, risk score, decision, and diff, color-coded green/yellow/red.
+**Stage 17 — Full End-to-End Wiring + Demo Rehearsal**
+- Wire inspection pipeline (`evaluate_tool_manifest` and `sanitize_mcp_response`) and console dashboard (`show_event` / `show_sanitization_event`) directly into the proxy loop in `trustgate/proxy/core.py`.
+- Rehearse all 5 demo scenes (typosquatting, clean approval, poisoned calculator block with diff, poisoned doc redaction, benign version bump hold) end-to-end through real stdio proxy.
+- DoD: all 5 scenes run back-to-back through the real proxy at least twice without manual code edits mid-run.
