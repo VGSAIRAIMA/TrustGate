@@ -1,7 +1,7 @@
 # Project Status: MCP TrustGate
 
 ## Current Stage
-**Stage 14: COMPLETE**
+**Stage 15: COMPLETE**
 
 ## Completed Stages Summary
 - **Stage 1: Environment Setup (COMPLETE)**
@@ -68,7 +68,17 @@
   - Employs sentence boundary expansion and redaction for cleanly separable injections while preserving legitimate content.
   - Implements three-way decision model: `PASS` (clean), `REDACTED` (cleanly separable), and `ESCALATE_FOR_REVIEW` (entangled/predominantly malicious).
   - Verified in `tests/test_output_sanitizer.py` (DoD met: querying poisoned doc returns clean sentences with injection redacted; querying clean doc passes through unchanged).
-  - Test suite status: 56/56 tests passed.
+- **Stage 15: Policy Engine (COMPLETE)**
+  - `trustgate/policy/engine.py`: Deterministic weighted scoring combining all security signals:
+    `risk = 0`
+    `+40 if registry_flagged`
+    `+20 if fingerprint_changed`
+    `+20 if regex_flagged`
+    `+30 if llm_confidence > 0.8`
+    `+40 if is_output_injection`
+    Decision: `risk >= 60 -> BLOCK`, `risk >= 20 -> HOLD`, `else -> ALLOW`.
+  - Verified in `tests/test_policy_engine.py` (DoD met: all 5 demo scenarios confirmed to land on exact intended policy action — poisoned calculator lands on `BLOCK`, benign version bump lands on `HOLD`, never BLOCK).
+  - Test suite status: 59/59 tests passed.
 
 ## Environment & API Key Notes
 - `venv/` is local and ignored by Git.
@@ -76,14 +86,8 @@
 - OpenRouter integration completed using `openrouter/free`.
 
 ## Next Stage
-**Stage 15 — Policy Engine**
-- Implementation of `trustgate/policy/engine.py`.
-- Deterministic weighted scoring combining all signals:
-  `risk = 0`
-  `+40 if registry_flagged`
-  `+20 if fingerprint_changed`
-  `+20 if regex_flagged`
-  `+30 if llm_confidence > 0.8`
-  `+40 if is_output_injection`
-  Decision: `risk >= 60 -> BLOCK`, `risk >= 20 -> HOLD`, `else -> ALLOW`.
-- DoD: run all 5 demo scenarios through `decide()` and confirm each lands on the intended action (poisoned calculator -> BLOCK; benign version bump -> HOLD, never BLOCK). Tune weights until true, then stop tuning.
+**Stage 16 — Rich Terminal Console**
+- Implementation of `trustgate/console/dashboard.py`.
+- Live terminal panel display using `rich` showing server, risk score, decision, and diff (when present), color-coded green/yellow/red.
+- Zero web server / browser dependencies.
+- DoD: live panel shows server, risk score, decision, and diff, color-coded green/yellow/red.
