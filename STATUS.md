@@ -1,7 +1,7 @@
 # Project Status: MCP TrustGate
 
 ## Current Stage
-**Stage 9 & Stage 10: COMPLETE**
+**Stage 11 & Stage 12: COMPLETE**
 
 ## Completed Stages Summary
 - **Stage 1: Environment Setup (COMPLETE)**
@@ -49,14 +49,23 @@
   - `trustgate/mechanisms/mutation.py`: `check_mutation()` verifies incoming fingerprints against SQLite vault.
   - Emits line-level `difflib.unified_diff` on hash mismatch detailing exact description mutations.
   - Verified with clean calculator vs poisoned calculator rug-pull in `tests/test_mutation.py`.
+- **Stage 11: Registry Identity Check (COMPLETE)**
+  - `trustgate/mechanisms/registry.py`: Curated known-good registry list (`KNOWN_REGISTRY`) and `registry_check()`.
+  - Detects typosquatting (e.g. `fireb4se-mcp-server` vs `firebase-mcp-server`) with `rapidfuzz` similarity scoring (>0.90) and unverified/mismatched publisher alerting.
+  - Verified in `tests/test_registry.py` (DoD met: `fireb4se-mcp-server` flagged with >0.90 similarity; genuine novel servers not flagged).
+- **Stage 12: Regex Scanner (COMPLETE)**
+  - `trustgate/security/patterns.py`: High-confidence regex patterns (`SUSPICIOUS_PATTERNS`) targeting system instruction overrides, prompt injections, and silent exfiltration directives.
+  - Guaranteed normalization before scanning to prevent Unicode obfuscation bypasses.
+  - Emits span details (`find_injection_spans`) for downstream Stage 14 output sanitizer redaction.
+  - Verified in `tests/test_regex_scanner.py` (DoD met: poisoned calculator trips multiple patterns; reworded variant `"disregard the guidance supplied earlier"` confirmed to not trip regex, illustrating the gap for Stage 13 LLM scanner).
 
 ## Environment & API Key Notes
 - `venv/` is local and ignored by Git.
 - No API keys, `.env` files, credentials, or secrets committed.
-- **Important Reminder:** OpenRouter API key will be needed before starting Stage 13 (LLM Scanner). The user will be reminded to configure it at that point.
+- **Important Reminder:** OpenRouter will be used for Stage 13 (LLM Scanner) with a free model/tier. No keys or secrets will be committed.
 
 ## Next Stage
-**Stage 11 — Registry Identity Check**
-- Implementation of `trustgate/mechanisms/registry.py`.
-- Pre-approval screening using `rapidfuzz` against a curated known-good registry list to detect typosquatting/impersonation (e.g. `fireb4se-mcp-server` vs `firebase-mcp-server`).
-- DoD: `fireb4se-mcp-server` against known `firebase-mcp-server` scores similarity > 0.90 with a mismatched publisher and is flagged. A genuinely new, non-similar name is not.
+**Stage 13 — LLM Scanner**
+- Implementation of `trustgate/security/llm_scanner.py`.
+- Semantic tier using OpenRouter with free-tier option for catching reworded/obfuscated attacks that regex misses.
+- DoD: `llm_scan()` on the reworded attack variant returns `malicious: true` with confidence > 0.8, using the exact fixed system instruction and JSON-only response contract. Confirm it degrades sanely (treat as inconclusive, don't crash) if the API call errors or returns non-JSON.
