@@ -1,0 +1,1 @@
+"""TrustGate console package."""
