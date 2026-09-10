@@ -1,7 +1,7 @@
 # Project Status: MCP TrustGate
 
 ## Current Stage
-**Stage 5 & Stage 6: COMPLETE**
+**Stage 7 & Stage 8: COMPLETE**
 
 ## Completed Stages Summary
 - **Stage 1: Environment Setup (COMPLETE)**
@@ -15,7 +15,7 @@
   - `servers/calculator_v2.py`: Benign version-bump variant with harmless docstring change for testing policy re-approval.
   - `servers/docs_search.py`: Internal docs search server providing clean documents and a poisoned document scenario (`leave_policy_poisoned`) for output sanitization testing.
   - `servers/email_tool.py`: Outgoing email tool server simulating dispatch.
-  - All 5 servers verified to start and idle waiting on stdio per Definition of Done.
+  - All 5 servers tested and verified to start and idle waiting on stdio per Definition of Done.
 - **Stage 3: CLI Shell (COMPLETE)**
   - `trustgate/main.py`: CLI entrypoint built using `argparse`, supporting `trustgate run --target "<command>"`.
   - Output diagnostics directed to `sys.stderr` so `sys.stdout` remains pure JSON-RPC for standard MCP clients.
@@ -32,6 +32,15 @@
   - `trustgate/proxy/parser.py`: Implemented `parse_message()` and `ParsedMessage` classifying messages into `TOOL_LIST`, `TOOL_CALL`, `RESPONSE`, `ERROR`, and `UNKNOWN`.
   - Helper accessors for tools manifests, tool call names/arguments, and output text extraction.
   - Verified across 8 test scenarios covering all message kinds in `tests/test_parser.py`.
+- **Stage 7: Unicode Normalizer (COMPLETE)**
+  - `trustgate/security/normalizer.py`: Strips invisible format characters (category `Cf` and explicit zero-width points), applies Unicode NFKC compatibility normalization, and folds visually confusable Cyrillic/Greek homoglyphs to ASCII.
+  - Recursive dictionary manifest normalization (`normalize_tool_manifest`) handles nested keys and values.
+  - Verified in `tests/test_normalizer.py`.
+- **Stage 8: Fingerprint & Pin Engine (COMPLETE)**
+  - `trustgate/mechanisms/fingerprint.py`: Canonicalizes tool contracts (`name`, `description`, `inputSchema`, `outputSchema`) to deterministic sorted JSON (`canonicalize_tool`).
+  - Computes SHA-256 client-side (`compute_tool_fingerprint`, `compute_manifest_fingerprint`).
+  - Enforces client-side security constraint: any server-supplied `hash` or `fingerprint` keys are stripped and ignored.
+  - Verified in `tests/test_fingerprint.py` (order invariance, collision-free mutation detection, server spoof rejection).
 
 ## Environment & API Key Notes
 - `venv/` is local and ignored by Git.
@@ -39,7 +48,7 @@
 - **Important Reminder:** OpenRouter API key will be needed before starting Stage 13 (LLM Scanner). The user will be reminded to configure it at that point.
 
 ## Next Stage
-**Stage 7 — Normalizer**
-- Implementation of `trustgate/security/normalizer.py`.
-- Strips invisible/zero-width Unicode characters and applies NFKC normalization.
-- DoD: A description containing zero-width spaces and homoglyphs is returned clean by `normalize_text()`.
+**Stage 9 — SQLite Vault**
+- Implementation of `trustgate/storage/database.py`.
+- Schema: `tools` table (pinned fingerprints) and `events` table (audit log).
+- DoD: `init_db()` creates `tools` and `events` tables; a row survives a process restart.
