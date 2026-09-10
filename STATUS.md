@@ -1,7 +1,7 @@
 # Project Status: MCP TrustGate
 
 ## Current Stage
-**Stage 11 & Stage 12: COMPLETE**
+**Stage 13: COMPLETE**
 
 ## Completed Stages Summary
 - **Stage 1: Environment Setup (COMPLETE)**
@@ -58,14 +58,21 @@
   - Guaranteed normalization before scanning to prevent Unicode obfuscation bypasses.
   - Emits span details (`find_injection_spans`) for downstream Stage 14 output sanitizer redaction.
   - Verified in `tests/test_regex_scanner.py` (DoD met: poisoned calculator trips multiple patterns; reworded variant `"disregard the guidance supplied earlier"` confirmed to not trip regex, illustrating the gap for Stage 13 LLM scanner).
+- **Stage 13: LLM Scanner (COMPLETE)**
+  - `trustgate/security/llm_scanner.py`: OpenRouter semantic scanner using the free router (`openrouter/free`).
+  - Analyzes normalized text against fixed JSON contract (`malicious`, `confidence`, `reason`).
+  - Implements robust graceful degradation: returns `is_inconclusive=True` (without crashing or blocking) on missing API key, network/connection errors, rate limits (HTTP 429), or malformed/non-JSON responses.
+  - Verified in `tests/test_llm_scanner.py` (DoD met: reworded attack variant correctly detected with `malicious: true` and confidence > 0.8; full error matrix verified to degrade gracefully as inconclusive).
+  - Test suite status: 49/49 tests passed.
 
 ## Environment & API Key Notes
 - `venv/` is local and ignored by Git.
 - No API keys, `.env` files, credentials, or secrets committed.
-- **Important Reminder:** OpenRouter will be used for Stage 13 (LLM Scanner) with a free model/tier. No keys or secrets will be committed.
+- OpenRouter integration completed using `openrouter/free`.
 
 ## Next Stage
-**Stage 13 — LLM Scanner**
-- Implementation of `trustgate/security/llm_scanner.py`.
-- Semantic tier using OpenRouter with free-tier option for catching reworded/obfuscated attacks that regex misses.
-- DoD: `llm_scan()` on the reworded attack variant returns `malicious: true` with confidence > 0.8, using the exact fixed system instruction and JSON-only response contract. Confirm it degrades sanely (treat as inconclusive, don't crash) if the API call errors or returns non-JSON.
+**Stage 14 — Output Sanitizer**
+- Implementation of `trustgate/mechanisms/output_sanitizer.py`.
+- Reuses regex_scan and llm_scan pipeline on tool output (outbound `tools/call` response).
+- High-confidence separable injections redacted while allowing legitimate content to pass through; ambiguous/entangled cases escalate.
+- DoD: querying the poisoned doc returns the clean sentences with the injected instruction redacted; querying the clean doc passes through unchanged.
