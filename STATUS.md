@@ -1,7 +1,7 @@
 # Project Status: MCP TrustGate
 
 ## Current Stage
-**Stage 16: COMPLETE**
+**Stage 17: COMPLETE — Full System Verified & Demo-Ready**
 
 ## Completed Stages Summary
 - **Stage 1: Environment Setup (COMPLETE)**
@@ -73,7 +73,7 @@
     `risk = 0`
     `+40 if registry_flagged`
     `+20 if fingerprint_changed`
-    `+20 if regex_flagged`
+    `+40 if regex_flagged`
     `+30 if llm_confidence > 0.8`
     `+40 if is_output_injection`
     Decision: `risk >= 60 -> BLOCK`, `risk >= 20 -> HOLD`, `else -> ALLOW`.
@@ -83,15 +83,21 @@
   - Color-coded: `ALLOW` in green, `HOLD` in yellow, `BLOCK` in red.
   - Configured to `sys.stderr` to keep `sys.stdout` pure JSON-RPC for standard MCP clients.
   - Verified in `tests/test_console.py` (DoD met: live panels verified for green/yellow/red rendering, score metrics, diff embedding, and output sanitization panels).
-  - Test suite status: 64/64 tests passed.
+- **Stage 17: Full End-to-End Wiring + Demo Rehearsal (COMPLETE)**
+  - `trustgate/proxy/core.py` and `trustgate/main.py`: Fully wired inspection pipeline intercepting inbound manifest tool lists and outbound tool responses in real-time.
+  - Verified all 5 scenes back-to-back twice through the real proxy via `tests/test_end_to_end_demo.py` without code edits:
+    1. Scene 1 (Typosquatted server `fireb4se-mcp-server`) -> flagged pre-approval (`HOLD`, risk 40).
+    2. Scene 2 (Clean calculator) -> approved and pinned (`ALLOW`, risk 0).
+    3. Scene 3 (Poisoned calculator) -> blocked with line-level diff displayed in red (`BLOCK`, risk 60, tool withheld).
+    4. Scene 4 (Docs search poisoned doc) -> output sanitized (`REDACTED`, clean sentences forwarded).
+    5. Scene 5 (Benign calculator v2) -> held for re-approval, never blocked (`HOLD`, risk 20).
+  - Standalone live runner script: `demo_rehearsal.py`.
+  - Test suite status: 65/65 tests passed.
 
 ## Environment & API Key Notes
 - `venv/` is local and ignored by Git.
 - No API keys, `.env` files, credentials, or secrets committed.
 - OpenRouter integration completed using `openrouter/free`.
 
-## Next Stage
-**Stage 17 — Full End-to-End Wiring + Demo Rehearsal**
-- Wire inspection pipeline (`evaluate_tool_manifest` and `sanitize_mcp_response`) and console dashboard (`show_event` / `show_sanitization_event`) directly into the proxy loop in `trustgate/proxy/core.py`.
-- Rehearse all 5 demo scenes (typosquatting, clean approval, poisoned calculator block with diff, poisoned doc redaction, benign version bump hold) end-to-end through real stdio proxy.
-- DoD: all 5 scenes run back-to-back through the real proxy at least twice without manual code edits mid-run.
+## Status
+All 17 core stages from BUILD_PLAN.md are fully implemented, automated, verified, and passing.

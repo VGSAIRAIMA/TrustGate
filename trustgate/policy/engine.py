@@ -19,10 +19,10 @@ from trustgate.security.normalizer import normalize_text
 from trustgate.security.patterns import regex_scan
 from trustgate.storage.database import DEFAULT_DB_PATH
 
-# Default tuned weights aligned with ARCHITECTURE.md line 91-105
+# Default tuned weights aligned with ARCHITECTURE.md line 91-105 and BUILD_PLAN.md Stage 15
 DEFAULT_WEIGHT_REGISTRY = 40
 DEFAULT_WEIGHT_FINGERPRINT = 20
-DEFAULT_WEIGHT_REGEX = 20
+DEFAULT_WEIGHT_REGEX = 40
 DEFAULT_WEIGHT_LLM = 30
 DEFAULT_WEIGHT_OUTPUT_INJECTION = 40
 

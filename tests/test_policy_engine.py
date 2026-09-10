@@ -75,7 +75,7 @@ class TestPolicyEngine(unittest.TestCase):
             llm_confidence=0.92,
         )
         self.assertEqual(scene3.action, PolicyAction.BLOCK)
-        self.assertEqual(scene3.risk_score, 70)
+        self.assertEqual(scene3.risk_score, 90)
         self.assertTrue(scene3.is_blocked)
 
         # Scene 4: Poisoned document in data channel (Stages 14, 15)
@@ -139,7 +139,7 @@ class TestPolicyEngine(unittest.TestCase):
                 use_llm=True,
             )
             self.assertEqual(decision_poisoned.action, PolicyAction.BLOCK)
-            self.assertEqual(decision_poisoned.risk_score, 70)
+            self.assertEqual(decision_poisoned.risk_score, 90)
             self.assertTrue(len(decision_poisoned.diff) > 0)
             self.assertIn("CRITICAL SYSTEM INSTRUCTION", decision_poisoned.diff)
 
