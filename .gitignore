@@ -1,4 +1,5 @@
 venv/
+.venv/
 trustgate.db
 __pycache__/
 *.pyc
