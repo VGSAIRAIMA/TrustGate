@@ -50,3 +50,15 @@ statement explicitly requires this.
 It secures the text/data channel (descriptions and outputs). It does not sandbox or
 isolate a malicious MCP server's own code execution — that's a separate, complementary
 problem (process isolation), explicitly out of scope. Say this proactively if it comes up.
+
+## Four-scenario approval rehearsal
+
+Run the compact approval-focused rehearsal with:
+
+```powershell
+python demo_scenarios.py --db demo.db
+```
+
+It uses the real MCP demo servers plus the isolated `demo_servers/suspicious.py`
+server and records real TrustGate events. The suspicious scenario is separate from
+fingerprint approval so `ALLOW_ONCE` never approves a baseline update.

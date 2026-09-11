@@ -47,7 +47,7 @@ class MCPGateway:
         self.db_path = db_path
         self.use_llm = use_llm
         self.api_key = api_key
-        self.approvals = ApprovalManager(timeout=approval_timeout, handler=approval_handler)
+        self.approvals = ApprovalManager(timeout=approval_timeout, handler=approval_handler, db_path=db_path)
         self.session: ClientSession | None = None
         self.tools: dict[str, Tool] = {}
         self.blocked_tools: set[str] = set()
@@ -105,7 +105,7 @@ class MCPGateway:
                 self._audit("FINGERPRINT_CHANGE", tool.name, decision, request_id=uuid.uuid4().hex)
             if decision.evidence.get("regex_findings"):
                 self._audit("REGEX_FINDING", tool.name, decision, request_id=uuid.uuid4().hex)
-            if decision.llm_result:
+            if decision.signals.get("llm_status") != "SKIPPED":
                 self._audit("LLM_ANALYSIS", tool.name, decision, request_id=uuid.uuid4().hex)
             show_event(decision, server=self.server_name, tool_name=tool.name)
 
@@ -203,7 +203,7 @@ class MCPGateway:
                     "output_findings": [sanitize_result.reason] if sanitize_result.injection_detected else [],
                     "llm_classification": (
                         sanitize_result.llm_classification
-                        if sanitize_result.llm_status == "completed"
+                        if sanitize_result.llm_status in {"PERFORMED", "CACHED"}
                         else sanitize_result.llm_status
                     ),
                     "llm_confidence": sanitize_result.llm_confidence,

@@ -15,6 +15,7 @@ from trustgate.proxy.core import StdioProxy
 from trustgate.proxy.adapter import DownstreamConfig, infer_server_name, inherited_overrides
 from trustgate.proxy.gateway import MCPGateway
 from trustgate.storage.database import DEFAULT_DB_PATH
+from trustgate.web_dashboard import run_web_dashboard
 
 
 def parse_args(args=None):
@@ -71,6 +72,11 @@ def parse_args(args=None):
     gateway_parser.add_argument("--approval-timeout", type=float, default=30.0, help="Seconds before pending approval fails closed.")
     gateway_parser.add_argument("--cwd", default=None, help="Working directory for the downstream server.")
 
+    web_parser = subparsers.add_parser("web", help="Run the separate TrustGate Web UI and approval API.")
+    web_parser.add_argument("--db", default=DEFAULT_DB_PATH, help="SQLite database path shared with TrustGate.")
+    web_parser.add_argument("--host", default="127.0.0.1", help="Web UI bind host.")
+    web_parser.add_argument("--port", type=int, default=8765, help="Web UI bind port.")
+
     return parser.parse_args(args)
 
 
@@ -109,6 +115,9 @@ def main():
             return 0
         except KeyboardInterrupt:
             return 0
+    if args.command == "web":
+        run_web_dashboard(db_path=args.db, host=args.host, port=args.port)
+        return 0
     return 1
 
 

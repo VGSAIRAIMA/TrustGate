@@ -9,6 +9,8 @@ Explicitly NOT an LLM decision; purely deterministic math and rule-based policy.
 
 from dataclasses import dataclass, field
 from enum import Enum
+import os
+import time
 from typing import Any
 
 from trustgate.mechanisms.mutation import check_mutation
@@ -28,6 +30,14 @@ DEFAULT_WEIGHT_OUTPUT_INJECTION = 40
 
 DEFAULT_THRESHOLD_BLOCK = 60
 DEFAULT_THRESHOLD_HOLD = 20
+LLM_CACHE_POLICY_VERSION = "1"
+DEFAULT_LLM_CACHE_TTL_SECONDS = 300.0
+_LLM_CACHE: dict[tuple[str, str, str, str, str], tuple[float, Any]] = {}
+
+
+def clear_llm_cache() -> None:
+    """Invalidate semantic results after policy/configuration changes."""
+    _LLM_CACHE.clear()
 
 
 class PolicyAction(str, Enum):
@@ -139,7 +149,7 @@ def decide(
     regex_findings = list(evidence.get("regex_findings", []))
     if regex_flagged and not regex_findings:
         regex_findings = ["known_pattern_match"]
-    llm_classification = str(evidence.get("llm_classification", "malicious" if llm_flagged else "not_run"))
+    llm_classification = str(evidence.get("llm_classification", "malicious" if llm_flagged else "SKIPPED"))
     output_findings = list(evidence.get("output_findings", []))
     if is_output_injection and not output_findings:
         output_findings = ["output_injection"]
@@ -153,11 +163,13 @@ def decide(
     risk = 0
     reasons: list[str] = []
     triggered_rules: list[str] = []
+    contributions: dict[str, int] = {}
 
     def add_signal(rule: str, amount: int, reason: str) -> None:
         nonlocal risk
         risk += amount
         triggered_rules.append(rule)
+        contributions[rule] = amount
         reasons.append(f"{reason} (+{amount}).")
 
     if registry_flagged:
@@ -192,6 +204,7 @@ def decide(
         "llm_confidence": llm_confidence,
         "output_findings": output_findings,
         "tool_metadata": tool_metadata,
+        "policy_contributions": contributions,
     }
     signals = {
         "registry_flagged": registry_flagged,
@@ -206,6 +219,7 @@ def decide(
         "llm_classification": llm_classification,
         "output_findings": output_findings,
         "tool_metadata": tool_metadata,
+        "policy_contributions": contributions,
     }
     return SecurityAssessment(
         action=action,
@@ -231,6 +245,8 @@ def evaluate_tool_manifest(
     db_path: str = DEFAULT_DB_PATH,
     use_llm: bool = False,
     api_key: str | None = None,
+    skip_llm_if_clean: bool = True,
+    llm_cache_ttl: float = DEFAULT_LLM_CACHE_TTL_SECONDS,
 ) -> PolicyDecision:
     """Evaluate an incoming tool manifest through the entire TrustGate inspection pipeline."""
     tool_name = tool.get("name", "")
@@ -257,16 +273,39 @@ def evaluate_tool_manifest(
     llm_flagged = False
     llm_conf = 0.0
     llm_result: dict[str, Any] | None = None
-    llm_status = "not_run"
+    llm_status = "SKIPPED"
     llm_reason = "LLM scan not requested for this manifest."
     llm_model = ""
-    if use_llm or (reg_tripped and has_mutated):
-        llm_res = llm_scan(norm_desc, api_key=api_key, normalize_first=False)
+    trusted_unchanged_clean = (
+        not is_new
+        and not has_mutated
+        and not reg_flagged
+        and not reg_tripped
+    )
+    should_run_llm = (use_llm and not (skip_llm_if_clean and trusted_unchanged_clean)) or (reg_tripped and has_mutated)
+    if should_run_llm:
+        requested_model = os.environ.get("OPENROUTER_MODEL", "openrouter/free")
+        cache_key = (
+            server,
+            tool_name,
+            mutation_res.current_fingerprint,
+            requested_model,
+            LLM_CACHE_POLICY_VERSION,
+        )
+        cached = _LLM_CACHE.get(cache_key)
+        if cached is not None and time.monotonic() - cached[0] <= llm_cache_ttl:
+            llm_res = cached[1]
+            llm_status = "CACHED"
+        else:
+            llm_res = llm_scan(norm_desc, api_key=api_key, normalize_first=False)
+            if not llm_res.is_inconclusive:
+                _LLM_CACHE[cache_key] = (time.monotonic(), llm_res)
+            llm_status = "UNAVAILABLE" if llm_res.is_inconclusive else "PERFORMED"
         llm_model = llm_res.model_used
         llm_reason = llm_res.reason
-        llm_status = "inconclusive" if llm_res.is_inconclusive else "completed"
         llm_conf = llm_res.malicious_probability
         llm_result = llm_res.as_dict()
+        llm_result["status"] = llm_status
         if not llm_res.is_inconclusive and llm_res.classification == "malicious":
             llm_flagged = True
 
@@ -274,13 +313,13 @@ def evaluate_tool_manifest(
         "registry_status": "flagged" if reg_flagged else "clean",
         "fingerprint_status": "changed" if has_mutated else "match" if not is_new else "new",
         "regex_findings": regex_res.matches,
-        "llm_classification": "malicious" if llm_flagged else "benign" if llm_status == "completed" else llm_status,
+        "llm_classification": "malicious" if llm_flagged else "benign" if llm_status in {"PERFORMED", "CACHED"} else llm_status,
         "llm_confidence": llm_conf,
         "llm_result": llm_result or {
             "status": llm_status,
-            "classification": "benign" if llm_status == "completed" else llm_status,
+            "classification": "benign" if llm_status in {"PERFORMED", "CACHED"} else llm_status,
             "malicious_probability": llm_conf,
-            "uncertainty": 1.0 if llm_status != "completed" else 0.0,
+            "uncertainty": 1.0 if llm_status not in {"PERFORMED", "CACHED"} else 0.0,
             "severity": "low",
             "reason": llm_reason,
             "evidence": [],

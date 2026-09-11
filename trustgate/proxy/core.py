@@ -65,7 +65,7 @@ class StdioProxy:
         self.use_llm = use_llm
         self.api_key = api_key
         self.auto_pin_approved = auto_pin_approved
-        self.approvals = ApprovalManager(timeout=approval_timeout, handler=approval_handler)
+        self.approvals = ApprovalManager(timeout=approval_timeout, handler=approval_handler, db_path=db_path)
 
         self.proc: asyncio.subprocess.Process | None = None
         self.stdin_queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -242,7 +242,7 @@ class StdioProxy:
                 )
             if decision.evidence.get("regex_findings"):
                 log_event(server, "REGEX_FINDING", decision.risk_score, decision.action.value, audit_detail, db_path=self.db_path)
-            if decision.llm_result:
+            if decision.signals.get("llm_status") != "SKIPPED":
                 log_event(server, "LLM_ANALYSIS", decision.risk_score, decision.action.value, audit_detail, db_path=self.db_path)
             if decision.evidence.get("fingerprint_status") == "changed":
                 log_event(server, "FINGERPRINT_CHANGE", decision.risk_score, decision.action.value, audit_detail, db_path=self.db_path)

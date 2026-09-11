@@ -42,10 +42,10 @@ class SanitizeResult:
     redacted_spans: list[str] = field(default_factory=list)
     reason: str = ""
     risk_score: int = 0
-    llm_status: str = "not_run"
+    llm_status: str = "SKIPPED"
     llm_confidence: float = 0.0
     llm_reason: str = "LLM scan not run."
-    llm_classification: str = "not_run"
+    llm_classification: str = "SKIPPED"
     llm_uncertainty: float = 1.0
     llm_severity: str = "low"
     llm_evidence: list[str] = field(default_factory=list)
@@ -219,7 +219,7 @@ def sanitize_output(
                 redacted_spans=[],
                 reason=f"Semantic injection flagged by LLM (confidence: {llm_res.confidence:.2f}): {llm_res.reason}; escalated for human review.",
                 risk_score=40,
-                llm_status="completed",
+                llm_status="PERFORMED",
                 llm_confidence=llm_res.confidence,
                 llm_reason=llm_res.reason,
                 llm_classification=llm_res.classification,
@@ -229,15 +229,15 @@ def sanitize_output(
             )
 
     # 4. Clean content: pass through unchanged
-    llm_status = "not_run"
+    llm_status = "SKIPPED"
     llm_confidence = 0.0
     llm_reason = "LLM scan not requested for this output."
-    llm_classification = "not_run"
+    llm_classification = "SKIPPED"
     llm_uncertainty = 1.0
     llm_severity = "low"
     llm_evidence: list[str] = []
     if use_llm:
-        llm_status = "inconclusive" if llm_res.is_inconclusive else "completed"
+        llm_status = "UNAVAILABLE" if llm_res.is_inconclusive else "PERFORMED"
         llm_confidence = llm_res.confidence
         llm_reason = llm_res.reason
         llm_classification = llm_res.classification

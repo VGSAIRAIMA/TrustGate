@@ -8,6 +8,7 @@ from unittest.mock import patch
 from trustgate.mechanisms.fingerprint import compute_tool_fingerprint
 from trustgate.policy.engine import (
     PolicyAction,
+    clear_llm_cache,
     decide,
     evaluate_tool_manifest,
 )
@@ -17,6 +18,7 @@ from trustgate.storage.database import save_tool
 
 class TestPolicyEngine(unittest.TestCase):
     def setUp(self):
+        clear_llm_cache()
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.tmp_dir.name, "test_policy.db")
 
@@ -197,7 +199,7 @@ class TestPolicyEngine(unittest.TestCase):
         assessment = decide(evidence={"fingerprint_status": "changed"})
         self.assertEqual(assessment.risk_score, 20)
         self.assertEqual(assessment.action, PolicyAction.HOLD)
-        self.assertEqual(assessment.evidence["llm_classification"], "not_run")
+        self.assertEqual(assessment.evidence["llm_classification"], "SKIPPED")
 
     def test_multiple_signals_combine_to_higher_risk(self):
         one_signal = decide(evidence={"regex_findings": ["ignore_prior"]})
@@ -236,6 +238,77 @@ class TestPolicyEngine(unittest.TestCase):
         self.assertEqual(assessment.risk_score, 7)
         self.assertIn("(+7).", assessment.reasons[0])
         self.assertNotIn("(+40)", assessment.reasons[0])
+
+    def test_clean_unchanged_trusted_tool_skips_llm(self):
+        save_tool("calculator", "calculate", compute_tool_fingerprint(self.clean_calculator), self.clean_calculator, db_path=self.db_path)
+        with patch("trustgate.policy.engine.llm_scan") as scanner:
+            assessment = evaluate_tool_manifest(
+                "calculator", self.clean_calculator, db_path=self.db_path, use_llm=True
+            )
+        scanner.assert_not_called()
+        self.assertEqual(assessment.signals["llm_status"], "SKIPPED")
+        self.assertEqual(assessment.action, PolicyAction.ALLOW)
+
+    def test_suspicious_manifest_invokes_llm(self):
+        save_tool("calculator", "calculate", compute_tool_fingerprint(self.clean_calculator), self.clean_calculator, db_path=self.db_path)
+        result = LLMScanResult(
+            classification="malicious",
+            malicious_probability=0.94,
+            uncertainty=0.03,
+            severity="high",
+            reason="Instruction override.",
+            evidence=["instruction override"],
+        )
+        with patch("trustgate.policy.engine.llm_scan", return_value=result) as scanner:
+            assessment = evaluate_tool_manifest(
+                "calculator", self.poisoned_calculator, db_path=self.db_path
+            )
+        scanner.assert_called_once()
+        self.assertEqual(assessment.signals["llm_status"], "PERFORMED")
+
+    def test_unchanged_suspicious_tool_uses_cache(self):
+        save_tool("calculator", "calculate", compute_tool_fingerprint(self.clean_calculator), self.clean_calculator, db_path=self.db_path)
+        result = LLMScanResult(
+            classification="malicious",
+            malicious_probability=0.94,
+            uncertainty=0.03,
+            severity="high",
+            reason="Instruction override.",
+            evidence=["instruction override"],
+        )
+        with patch("trustgate.policy.engine.llm_scan", return_value=result) as scanner:
+            first = evaluate_tool_manifest("calculator", self.poisoned_calculator, db_path=self.db_path)
+            second = evaluate_tool_manifest("calculator", self.poisoned_calculator, db_path=self.db_path)
+        scanner.assert_called_once()
+        self.assertEqual(first.signals["llm_status"], "PERFORMED")
+        self.assertEqual(second.signals["llm_status"], "CACHED")
+
+    def test_fingerprint_change_invalidates_cache(self):
+        save_tool("calculator", "calculate", compute_tool_fingerprint(self.clean_calculator), self.clean_calculator, db_path=self.db_path)
+        result = LLMScanResult(classification="malicious", malicious_probability=0.9, uncertainty=0.04, severity="high", reason="Threat", evidence=["override"])
+        changed_again = dict(self.poisoned_calculator)
+        changed_again["description"] += " Additional changed instruction."
+        with patch("trustgate.policy.engine.llm_scan", return_value=result) as scanner:
+            evaluate_tool_manifest("calculator", self.poisoned_calculator, db_path=self.db_path)
+            evaluate_tool_manifest("calculator", changed_again, db_path=self.db_path)
+        self.assertEqual(scanner.call_count, 2)
+
+    def test_policy_version_invalidates_cache(self):
+        save_tool("calculator", "calculate", compute_tool_fingerprint(self.clean_calculator), self.clean_calculator, db_path=self.db_path)
+        result = LLMScanResult(classification="malicious", malicious_probability=0.9, uncertainty=0.04, severity="high", reason="Threat", evidence=["override"])
+        with patch("trustgate.policy.engine.llm_scan", return_value=result) as scanner:
+            evaluate_tool_manifest("calculator", self.poisoned_calculator, db_path=self.db_path)
+            with patch("trustgate.policy.engine.LLM_CACHE_POLICY_VERSION", "changed"):
+                evaluate_tool_manifest("calculator", self.poisoned_calculator, db_path=self.db_path)
+        self.assertEqual(scanner.call_count, 2)
+
+    def test_expired_cache_reinvokes_llm(self):
+        save_tool("calculator", "calculate", compute_tool_fingerprint(self.clean_calculator), self.clean_calculator, db_path=self.db_path)
+        result = LLMScanResult(classification="malicious", malicious_probability=0.9, uncertainty=0.04, severity="high", reason="Threat", evidence=["override"])
+        with patch("trustgate.policy.engine.llm_scan", return_value=result) as scanner:
+            evaluate_tool_manifest("calculator", self.poisoned_calculator, db_path=self.db_path, llm_cache_ttl=0)
+            evaluate_tool_manifest("calculator", self.poisoned_calculator, db_path=self.db_path, llm_cache_ttl=0)
+        self.assertEqual(scanner.call_count, 2)
 
 
 if __name__ == "__main__":

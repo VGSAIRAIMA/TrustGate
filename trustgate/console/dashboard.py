@@ -9,6 +9,7 @@ Zero browser / web-server dependencies.
 """
 
 from io import StringIO
+from datetime import datetime, timezone
 from typing import Any
 
 from rich.console import Console, Group
@@ -58,10 +59,12 @@ def format_signals_table(signals: dict[str, Any]) -> Table:
         if signals["llm_flagged"]:
             conf = signals.get("llm_confidence", 0.0)
             status = f"[red]MALICIOUS ({conf:.0%} confidence)[/red]"
-        elif signals.get("llm_status") == "not_run":
-            status = "[yellow]NOT RUN[/yellow]"
-        elif signals.get("llm_status") == "inconclusive":
-            status = "[yellow]INCONCLUSIVE[/yellow]"
+        elif signals.get("llm_status") == "SKIPPED":
+            status = "[yellow]SKIPPED[/yellow]"
+        elif signals.get("llm_status") == "CACHED":
+            status = "[cyan]CACHED[/cyan]"
+        elif signals.get("llm_status") == "UNAVAILABLE":
+            status = "[yellow]UNAVAILABLE[/yellow]"
         else:
             status = "[green]CLEAN[/green]"
         table.add_row("LLM Semantic:", status)
@@ -78,7 +81,7 @@ def format_signals_table(signals: dict[str, Any]) -> Table:
             table.add_row("LLM Explanation:", signals["llm_reason"])
         for indicator in signals.get("llm_evidence", []):
             table.add_row("LLM Evidence:", f"[yellow]- {indicator}[/yellow]")
-        if signals.get("llm_status") == "inconclusive" and signals.get("llm_reason"):
+        if signals.get("llm_status") == "UNAVAILABLE" and signals.get("llm_reason"):
             table.add_row("LLM Detail:", f"[yellow]{signals['llm_reason']}[/yellow]")
 
     if "is_output_injection" in signals:
@@ -106,7 +109,42 @@ def create_decision_panel(
 
     elements: list[Any] = []
 
-    # 1. Summary Meta Table
+    # 1. Structured security report
+    elements.append(Text("=" * 60, style="dim"))
+    elements.append(Text("TRUSTGATE", style="bold cyan"))
+    elements.append(Text("SECURITY GATEWAY", style="bold"))
+    elements.append(Text("=" * 60, style="dim"))
+    elements.append(Text("REQUEST", style="bold underline"))
+    elements.append(Text(f"Tool: {t_name or 'unknown'}    Action: {decision.action.value}"))
+    elements.append(Text(f"Time: {datetime.now(timezone.utc).isoformat()}"))
+    elements.append(Text(""))
+    elements.append(Text("IDENTITY", style="bold underline"))
+    elements.append(Text(f"Registry              {decision.signals.get('registry_status', 'not provided')}"))
+    elements.append(Text("INTEGRITY", style="bold underline"))
+    elements.append(Text(f"SHA-256 Baseline      {decision.signals.get('fingerprint_status', 'not provided')}"))
+    elements.append(Text("DETECTION", style="bold underline"))
+    elements.append(Text(f"Regex                 {'TRIPPED' if decision.signals.get('regex_flagged') else 'CLEAN'}"))
+    elements.append(Text(f"LLM                   {str(decision.signals.get('llm_classification', 'not provided')).upper()}"))
+    elements.append(Text(f"LLM Probability       {decision.signals.get('llm_confidence', 0.0):.0%}"))
+    elements.append(Text(f"Severity              {str(decision.severity).upper()}"))
+    elements.append(Text("LLM REASONING", style="bold underline"))
+    elements.append(Text(str(decision.signals.get('llm_reason', 'No LLM reasoning provided.'))))
+    for indicator in decision.signals.get("llm_evidence", []):
+        elements.append(Text(f"- {indicator}"))
+    elements.append(Text("POLICY", style="bold underline"))
+    contributions = decision.signals.get("policy_contributions", {})
+    for label, rule in (("Registry", "registry_flagged"), ("Fingerprint", "fingerprint_changed"), ("Regex", "regex_findings"), ("LLM", "llm_malicious"), ("Output", "output_findings")):
+        elements.append(Text(f"{label:<20} +{contributions.get(rule, 0)}"))
+    for reason in decision.reasons:
+        elements.append(Text(reason))
+    elements.append(Text(f"Risk Score             {decision.risk_score} / 100"))
+    elements.append(Text("DECISION", style="bold underline"))
+    elements.append(Text(f"                 {decision.action.value}", style=f"bold {color}"))
+    elements.append(Text("ENFORCEMENT", style="bold underline"))
+    elements.append(Text(f"Request status: {'BLOCKED' if decision.is_blocked else 'PENDING APPROVAL' if decision.is_held else 'ALLOWED'}"))
+    elements.append(Text(""))
+
+    # 2. Compatibility summary table
     meta_table = Table(box=None, show_header=False, pad_edge=False, padding=(0, 1))
     meta_table.add_column("Key", style="dim")
     meta_table.add_column("Value", style="bold")
@@ -192,7 +230,7 @@ def create_sanitization_panel(
     meta_table.add_row("Tool Output:", f"[white]{t_name}[/white]")
     meta_table.add_row("Action:", f"[bold {color}]{badge}[/bold {color}]")
     meta_table.add_row("Risk Score:", f"[{color}]{result.risk_score} / 100[/{color}]")
-    if result.llm_status != "not_run":
+    if result.llm_status != "SKIPPED":
         meta_table.add_row("LLM Classification:", f"[cyan]{result.llm_classification.upper()}[/cyan]")
         meta_table.add_row("LLM Probability:", f"[cyan]{result.llm_confidence:.0%}[/cyan]")
         meta_table.add_row("LLM Uncertainty:", f"[cyan]{result.llm_uncertainty:.0%}[/cyan]")

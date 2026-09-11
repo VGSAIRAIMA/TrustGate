@@ -8,6 +8,8 @@ import sys
 import uuid
 from typing import Any, Awaitable, Callable
 
+from trustgate.storage.database import DEFAULT_DB_PATH, get_approval, list_approvals, save_approval
+
 
 class ApprovalAction(str, Enum):
     BLOCK = "BLOCK"
@@ -54,9 +56,10 @@ ApprovalHandler = Callable[[PendingApproval], Awaitable[ApprovalAction | str] | 
 class ApprovalManager:
     """Non-blocking approval registry with fail-closed timeout behavior."""
 
-    def __init__(self, timeout: float = 30.0, handler: ApprovalHandler | None = None):
+    def __init__(self, timeout: float = 30.0, handler: ApprovalHandler | None = None, db_path: str = DEFAULT_DB_PATH):
         self.timeout = timeout
         self.handler = handler
+        self.db_path = db_path
         self.pending: dict[str, PendingApproval] = {}
         self._waiters: dict[str, asyncio.Future[ApprovalAction]] = {}
 
@@ -65,6 +68,7 @@ class ApprovalManager:
         pending.created_at = pending.created_at or datetime.now(timezone.utc).isoformat()
         pending.request_id = pending.request_id or uuid.uuid4().hex
         self.pending[pending.request_id] = pending
+        save_approval(pending.as_dict(), db_path=self.db_path)
         waiter: asyncio.Future[ApprovalAction] = loop.create_future()
         self._waiters[pending.request_id] = waiter
         try:
@@ -78,9 +82,13 @@ class ApprovalManager:
                         if pending.fingerprint_change
                         else ApprovalAction.BLOCK
                     )
-            else:
-                result = await asyncio.wait_for(asyncio.to_thread(self._prompt, pending), timeout=self.timeout)
+            elif self._terminal_available():
+                result = await self._wait_for_terminal_or_shared(pending)
                 await self.resolve(pending.request_id, result)
+            else:
+                action = await self._poll_shared_resolution(pending.request_id, pending.fingerprint_change)
+                if action is not None:
+                    waiter.set_result(action)
             action = await asyncio.wait_for(waiter, timeout=self.timeout)
         except (asyncio.TimeoutError, EOFError, OSError):
             action = ApprovalAction.BLOCK
@@ -88,6 +96,9 @@ class ApprovalManager:
             self.pending.pop(pending.request_id, None)
             self._waiters.pop(pending.request_id, None)
         pending.action = action
+        record = pending.as_dict()
+        record["resolved_at"] = datetime.now(timezone.utc).isoformat()
+        save_approval(record, db_path=self.db_path)
         return pending, action
 
     async def resolve(self, request_id: str, action: ApprovalAction | str) -> bool:
@@ -106,10 +117,47 @@ class ApprovalManager:
         if resolved not in valid:
             return False
         waiter.set_result(resolved)
+        record = pending.as_dict()
+        record["action"] = resolved.value
+        record["resolved_at"] = datetime.now(timezone.utc).isoformat()
+        save_approval(record, db_path=self.db_path)
         return True
 
     def list_pending(self) -> list[dict[str, Any]]:
-        return [item.as_dict() for item in self.pending.values()]
+        local = {item["request_id"]: item for item in (item.as_dict() for item in self.pending.values())}
+        for item in list_approvals(db_path=self.db_path, pending_only=True):
+            local[item["request_id"]] = item
+        return list(local.values())
+
+    async def _poll_shared_resolution(self, request_id: str, fingerprint_change: bool) -> ApprovalAction | None:
+        deadline = asyncio.get_running_loop().time() + self.timeout
+        valid = {ApprovalAction.APPROVE_UPDATE.value, ApprovalAction.REJECT_UPDATE.value} if fingerprint_change else {ApprovalAction.ALLOW_ONCE.value, ApprovalAction.BLOCK.value}
+        while asyncio.get_running_loop().time() < deadline:
+            record = get_approval(request_id, db_path=self.db_path)
+            action = record.get("action") if record else None
+            if action in valid:
+                return ApprovalAction(action)
+            await asyncio.sleep(0.1)
+        return None
+
+    async def _wait_for_terminal_or_shared(self, pending: PendingApproval) -> ApprovalAction:
+        terminal_task = asyncio.create_task(asyncio.to_thread(self._prompt, pending))
+        shared_task = asyncio.create_task(self._poll_shared_resolution(pending.request_id, pending.fingerprint_change))
+        done, pending_tasks = await asyncio.wait(
+            {terminal_task, shared_task},
+            timeout=self.timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending_tasks:
+            task.cancel()
+        if not done:
+            raise asyncio.TimeoutError
+        result = next(iter(done)).result()
+        return result if result is not None else ApprovalAction.BLOCK
+
+    @staticmethod
+    def _terminal_available() -> bool:
+        return bool(getattr(sys.stdin, "isatty", lambda: False)()) or sys.platform == "win32"
 
     @staticmethod
     def _prompt(pending: PendingApproval) -> None:

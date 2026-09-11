@@ -8,6 +8,7 @@ Implements the SQLite trust vault and audit event log using standard sqlite3:
 from datetime import datetime, timezone
 import json
 import sqlite3
+import threading
 from typing import Any
 
 DEFAULT_DB_PATH = "trustgate.db"
@@ -30,6 +31,22 @@ CREATE TABLE IF NOT EXISTS events (
     risk INTEGER NOT NULL,
     decision TEXT NOT NULL,
     detail TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS approvals (
+    request_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    server TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    risk INTEGER NOT NULL,
+    severity TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    old_hash TEXT NOT NULL,
+    new_hash TEXT NOT NULL,
+    fingerprint_change INTEGER NOT NULL,
+    action TEXT
 );
 """
 
@@ -180,7 +197,19 @@ def log_event(
             (timestamp, server, event_type, risk, decision, detail),
         )
         conn.commit()
-        return cursor.lastrowid or 0
+        event_id = cursor.lastrowid or 0
+        try:
+            from trustgate.integrations.n8n import emit_event
+
+            threading.Thread(
+                target=emit_event,
+                args=(server, event_type, risk, decision, detail, timestamp, event_id),
+                daemon=True,
+            ).start()
+        except Exception:
+            # Optional integrations must never disrupt local audit persistence.
+            pass
+        return event_id
     finally:
         conn.close()
 
@@ -212,5 +241,93 @@ def get_events(
             )
 
         return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def save_approval(approval: dict[str, Any], db_path: str = DEFAULT_DB_PATH) -> None:
+    """Persist a pending approval request without storing private payload content."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO approvals
+            (request_id, created_at, resolved_at, server, tool, risk, severity, reason,
+             evidence, old_hash, new_hash, fingerprint_change, action)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                approval["request_id"], approval["timestamp"], approval.get("resolved_at"),
+                approval["server"], approval["tool"], approval["risk_score"],
+                approval["severity"], approval["reason"], json.dumps(approval.get("evidence", [])),
+                approval.get("old_hash", ""), approval.get("new_hash", ""),
+                int(bool(approval.get("fingerprint_change"))), approval.get("action"),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_approval(request_id: str, db_path: str = DEFAULT_DB_PATH) -> dict[str, Any] | None:
+    """Return one pending or resolved approval request."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute("SELECT * FROM approvals WHERE request_id = ?", (request_id,)).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        try:
+            result["evidence"] = json.loads(result["evidence"])
+        except (TypeError, json.JSONDecodeError):
+            result["evidence"] = []
+        result["fingerprint_change"] = bool(result["fingerprint_change"])
+        result["risk_score"] = result["risk"]
+        result["timestamp"] = result["created_at"]
+        return result
+    finally:
+        conn.close()
+
+
+def list_approvals(db_path: str = DEFAULT_DB_PATH, pending_only: bool = True) -> list[dict[str, Any]]:
+    """List approval requests, newest first."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        query = "SELECT * FROM approvals"
+        params: tuple[Any, ...] = ()
+        if pending_only:
+            query += " WHERE action IS NULL"
+        query += " ORDER BY created_at DESC"
+        rows = conn.execute(query, params).fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["evidence"] = json.loads(item["evidence"])
+            except (TypeError, json.JSONDecodeError):
+                item["evidence"] = []
+            item["fingerprint_change"] = bool(item["fingerprint_change"])
+            item["risk_score"] = item["risk"]
+            item["timestamp"] = item["created_at"]
+            results.append(item)
+        return results
+    finally:
+        conn.close()
+
+
+def resolve_approval(request_id: str, action: str, db_path: str = DEFAULT_DB_PATH) -> bool:
+    """Resolve a pending approval for a gateway process polling the shared DB."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            "UPDATE approvals SET action = ?, resolved_at = ? WHERE request_id = ? AND action IS NULL",
+            (action, datetime.now(timezone.utc).isoformat(), request_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()
